@@ -1,0 +1,69 @@
+% 结合三个阵列获得的MUSIC谱，联合锁定待测目标三维位置
+clc; clear; close all;
+
+% ================= 1. 基础环境参数 =================
+roomsize = [10, 10, 3]; 
+BS_pos = [1, 1, 3;      
+          1, 9, 3;      
+          9, 9, 3];     
+target_pos = [5, 6, 1]; 
+grid_res = 0.1;
+
+% ================= 2. 蒙特卡洛参数设置 =================
+MC_runs = 1000; % 蒙特卡洛次数 (建议调试时设为 2~5，确认没报错再改为 1000)
+SNR_array = linspace(-10, 30, 9); % -10, -5, 0...30 这样的步长画出来的线更好看
+num_snr = length(SNR_array);
+
+% 初始化 MSE 存储空间 (务必声明为 1行N列 的行向量)
+MSE_ISSM = zeros(1, num_snr); 
+MSE_noISSM = zeros(1, num_snr); 
+
+fprintf('\n====== 启动室内定位蒙特卡洛仿真 ======\n');
+fprintf('总测试 SNR 数量: %d, 每点重复次数: %d\n', num_snr, MC_runs);
+total_start_time = tic;
+
+% ================= 3. 开始仿真循环 =================
+for i = 1:num_snr
+    current_SNR = SNR_array(i);
+    fprintf('正在仿真 SNR = %3d dB [%d/%d] ... ', current_SNR, i, num_snr);
+    
+    m_issm = 0;
+    m_noissm = 0;
+    
+    loop_time = tic; % 记录单次 SNR 的耗时
+    
+    % --- 内层重复实验 ---
+    parfor k = 1:MC_runs
+        [est_pos, ~]    = FusionLocalization3D(target_pos, BS_pos, roomsize, 'ISSM',   grid_res, current_SNR, false);
+        [est_pos_no, ~] = FusionLocalization3D(target_pos, BS_pos, roomsize, 'noISSM', grid_res, current_SNR, false);
+        
+        m_issm = m_issm + (norm(target_pos - est_pos))^2;
+        m_noissm = m_noissm + (norm(target_pos - est_pos_no))^2;
+    end
+    
+    MSE_ISSM(i) = m_issm / MC_runs;
+    MSE_noISSM(i) = m_noissm / MC_runs;
+    
+    fprintf('耗时 %.2f 秒\n', toc(loop_time));
+end
+fprintf('====== 仿真结束！总耗时 %.2f 分钟 ======\n\n', toc(total_start_time)/60);
+
+% ================= 4. 绘图与结果展示 =================
+figure('Color', 'w', 'Name', 'MSE Performance');
+
+MSE_ISSM_plot = max(MSE_ISSM, 1e-10);
+MSE_noISSM_plot = max(MSE_noISSM, 1e-10);
+
+plot(SNR_array, MSE_ISSM_plot, '-r^', 'LineWidth', 2, 'MarkerSize', 8, 'DisplayName', '二维空间平滑 (ISSM) 后定位MSE');
+hold on;
+plot(SNR_array, MSE_noISSM_plot, '-b*', 'LineWidth', 2, 'MarkerSize', 8, 'DisplayName', '直接谱估计定位MSE');
+
+set(gca, 'YScale', 'log');grid on;
+
+title(sprintf('二维平滑算法与无多径处理室内定位 %d 次仿真对比', MC_runs), 'FontSize', 13);
+xlabel('信噪比 SNR (dB)');
+
+ylabel('均方误差 MSE (m^2) ');
+legend('show', 'Location', 'northeast');
+
+set(gca, 'YMinorGrid', 'on');
